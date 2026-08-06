@@ -9,6 +9,8 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     # "frappe~=16.0.0" # Installed and managed by bench.
+    "cryptography>=42.0.5", # AES-256-GCM + RSA-OAEP-SHA1 + SHA256withRSA envelope
+    "PyJWT>=2.8.0", # Bearer token issued by the authenticate endpoint
 ]
 
 [build-system]

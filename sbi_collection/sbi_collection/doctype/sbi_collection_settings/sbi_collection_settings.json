@@ -1,0 +1,187 @@
+{
+ "actions": [],
+ "creation": "2026-07-29 00:00:00",
+ "doctype": "DocType",
+ "document_type": "Setup",
+ "engine": "InnoDB",
+ "field_order": [
+  "keys_section",
+  "client_private_key",
+  "client_private_key_password",
+  "column_break_keys",
+  "sbi_public_key",
+  "authentication_section",
+  "sbi_username",
+  "sbi_password",
+  "enable_encryption",
+  "column_break_auth",
+  "jwt_secret",
+  "token_expiry_minutes",
+  "van_section",
+  "van_prefix",
+  "column_break_van",
+  "van_max_length",
+  "behavior_section",
+  "enable_dealer_validation",
+  "column_break_behavior",
+  "default_company",
+  "bank_account",
+  "ssl_verify"
+ ],
+ "fields": [
+  {
+   "fieldname": "keys_section",
+   "fieldtype": "Section Break",
+   "label": "RSA Keys"
+  },
+  {
+   "description": "Our RSA private key (PEM, generated via `openssl genrsa -out privatekey.pem 2048`). Used to decrypt the incoming <code>session_key</code>.",
+   "fieldname": "client_private_key",
+   "fieldtype": "Attach",
+   "in_list_view": 1,
+   "label": "Client Private Key"
+  },
+  {
+   "description": "Required only if the uploaded private key is passphrase-protected.",
+   "fieldname": "client_private_key_password",
+   "fieldtype": "Password",
+   "label": "Client Private Key Password"
+  },
+  {
+   "fieldname": "column_break_keys",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "SBI's RSA public key (PEM). Used to wrap our AES session key in responses and to verify incoming <code>hash_digest</code> signatures.",
+   "fieldname": "sbi_public_key",
+   "fieldtype": "Attach",
+   "in_list_view": 1,
+   "label": "SBI Public Key"
+  },
+  {
+   "fieldname": "authentication_section",
+   "fieldtype": "Section Break",
+   "label": "Authentication"
+  },
+  {
+   "description": "Credentials SBI uses to call our <code>authenticate</code> endpoint.",
+   "fieldname": "sbi_username",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "SBI Username"
+  },
+  {
+   "fieldname": "sbi_password",
+   "fieldtype": "Password",
+   "in_list_view": 1,
+   "label": "SBI Password"
+  },
+  {
+   "default": "1",
+   "description": "When enabled, the authenticate endpoint decrypts incoming requests and encrypts responses (production). Disable for development/UAT to use plain JSON.",
+   "fieldname": "enable_encryption",
+   "fieldtype": "Check",
+   "label": "Enable Encryption"
+  },
+  {
+   "fieldname": "column_break_auth",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Secret used to sign the bearer token issued by <code>authenticate</code>. Auto-generated on install if left empty.",
+   "fieldname": "jwt_secret",
+   "fieldtype": "Password",
+   "label": "JWT Secret"
+  },
+  {
+   "default": "60",
+   "fieldname": "token_expiry_minutes",
+   "fieldtype": "Int",
+   "label": "Token Expiry (minutes)"
+  },
+  {
+   "fieldname": "van_section",
+   "fieldtype": "Section Break",
+   "label": "VAN Configuration"
+  },
+  {
+   "description": "Exactly 6 alphanumeric characters. Used as the first part of every generated Collection VAN (VAN = prefix + customer identifier).",
+   "fieldname": "van_prefix",
+   "fieldtype": "Data",
+   "label": "VAN Prefix",
+   "length": 6
+  },
+  {
+   "fieldname": "column_break_van",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "20",
+   "description": "Maximum total length of a generated VAN. The server rejects any VAN that exceeds this length.",
+   "fieldname": "van_max_length",
+   "fieldtype": "Int",
+   "label": "VAN Max Length"
+  },
+  {
+   "fieldname": "behavior_section",
+   "fieldtype": "Section Break",
+   "label": "Behavior"
+  },
+  {
+   "default": "0",
+   "description": "The SBI Collection document marks dealer validation as Optional. Enable only if opted in.",
+   "fieldname": "enable_dealer_validation",
+   "fieldtype": "Check",
+   "label": "Enable Dealer Validation"
+  },
+  {
+   "fieldname": "column_break_behavior",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Company under which future Payment Entries will be created.",
+   "fieldname": "default_company",
+   "fieldtype": "Link",
+   "label": "Default Company",
+   "options": "Company"
+  },
+  {
+   "description": "Bank Account where SBI collections land. Its ledger account is used as paid_to on Payment Entries created by the Transaction Post API.",
+   "fieldname": "bank_account",
+   "fieldtype": "Link",
+   "label": "Collection Bank Account",
+   "options": "Bank Account"
+  },
+  {
+   "default": "1",
+   "description": "Disable only in a UAT environment for testing.",
+   "fieldname": "ssl_verify",
+   "fieldtype": "Check",
+   "label": "SSL Verify"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-04 21:17:40.242927",
+ "modified_by": "Administrator",
+ "module": "Sbi Collection",
+ "name": "SBI Collection Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

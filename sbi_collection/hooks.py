@@ -43,7 +43,7 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {"Customer": "public/js/customer.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -86,12 +86,12 @@ app_license = "mit"
 # ------------
 
 # before_install = "sbi_collection.install.before_install"
-# after_install = "sbi_collection.install.after_install"
+after_install = "sbi_collection.install.after_install"
 
 # Uninstallation
 # ------------
 
-# before_uninstall = "sbi_collection.uninstall.before_uninstall"
+before_uninstall = "sbi_collection.uninstall.before_uninstall"
 # after_uninstall = "sbi_collection.uninstall.after_uninstall"
 
 # Integration Setup
@@ -247,9 +247,11 @@ app_license = "mit"
 # Automatically update python controller files with type annotations for this app.
 # export_python_type_annotations = True
 
-# default_log_clearing_doctypes = {
-# 	"Logging DocType Name": 30  # days to retain logs
-# }
+# Default retention (days) for log DocTypes, consumed by Frappe core's
+# Log Settings scheduled job. Editable per-site in "Log Settings".
+default_log_clearing_doctypes = {
+	"Collection API Log": 60,  # days to retain logs
+}
 
 # Translation
 # ------------

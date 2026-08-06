@@ -1,0 +1,188 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-08-04 00:00:00.000000",
+ "doctype": "DocType",
+ "document_type": "System",
+ "engine": "InnoDB",
+ "field_order": [
+  "api_name",
+  "status",
+  "column_break_header",
+  "request_id",
+  "started_at",
+  "processing_time",
+  "context_section",
+  "van",
+  "customer",
+  "column_break_context",
+  "amount",
+  "transaction_reference",
+  "transport_section",
+  "http_method",
+  "endpoint",
+  "column_break_transport",
+  "remote_ip",
+  "payloads_section",
+  "request_payload",
+  "response_payload",
+  "error_section",
+  "error_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "api_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "API Name",
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nSuccess\nFailed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "request_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Request ID"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "processing_time",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Processing Time (s)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "context_section",
+   "fieldtype": "Section Break",
+   "label": "Context"
+  },
+  {
+   "fieldname": "van",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "VAN"
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "column_break_context",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "label": "Amount",
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "transaction_reference",
+   "fieldtype": "Data",
+   "label": "Transaction Reference"
+  },
+  {
+   "fieldname": "transport_section",
+   "fieldtype": "Section Break",
+   "label": "Transport"
+  },
+  {
+   "fieldname": "http_method",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "HTTP Method"
+  },
+  {
+   "fieldname": "endpoint",
+   "fieldtype": "Data",
+   "label": "Endpoint"
+  },
+  {
+   "fieldname": "column_break_transport",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "remote_ip",
+   "fieldtype": "Data",
+   "label": "Remote IP"
+  },
+  {
+   "fieldname": "payloads_section",
+   "fieldtype": "Section Break",
+   "label": "Payloads"
+  },
+  {
+   "fieldname": "request_payload",
+   "fieldtype": "Code",
+   "label": "Request Payload",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "response_payload",
+   "fieldtype": "Code",
+   "label": "Response Payload",
+   "options": "JSON"
+  },
+  {
+   "depends_on": "eval:doc.status===\"Failed\"",
+   "fieldname": "error_section",
+   "fieldtype": "Section Break",
+   "label": "Error"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Long Text",
+   "label": "Error Message",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-04 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sbi Collection",
+ "name": "Collection API Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
