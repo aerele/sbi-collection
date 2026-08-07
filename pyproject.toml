@@ -4,7 +4,7 @@ authors = [
     { name = "arnesh@aerele.in", email = "arnesh@aerele.in"}
 ]
 description = "SBI Collection API integration for ERPNext"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 readme = "README.md"
 dynamic = ["version"]
 dependencies = [
@@ -65,3 +65,7 @@ typing-modules = ["frappe.types.DF"]
 quote-style = "double"
 indent-style = "tab"
 docstring-code-format = true
+
+[tool.bench.frappe-dependencies]
+frappe = ">=15.0.0,<17.0.0"
+erpnext = ">=15.0.0,<17.0.0"
