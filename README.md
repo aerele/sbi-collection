@@ -2,6 +2,9 @@
 
 SBI Collection API integration for ERPNext
 
+See [SBI UAT API contract](sbi_collection/UAT_CONTRACT.md) for callback responses,
+encryption behavior, and database-free verification instructions.
+
 ### Installation
 
 You can install this app using the [bench](https://github.com/frappe/bench) CLI:

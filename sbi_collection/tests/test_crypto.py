@@ -44,7 +44,7 @@ class TestSbiCollectionCrypto(unittest.TestCase):
 		"""encrypt_response -> decrypt_request recovers the original payload."""
 		payload = {
 			"status_code": "00",
-			"message": "Dealer verified Successfully",
+			"message": "Success",
 			"request_id": "65432789677",
 		}
 

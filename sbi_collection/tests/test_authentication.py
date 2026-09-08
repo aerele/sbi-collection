@@ -176,11 +176,11 @@ class TestAuthenticationService(FrappeTestCase):
 	# --- response builders ---
 	def test_build_success_response_shape(self):
 		resp = self.service.build_success_response("tok")
-		self.assertEqual(resp, {"status": "SUCCESS", "message": "Authentication Successful", "token": "tok"})
+		self.assertEqual(resp, {"status_code": "00", "message": "Login Successful", "token": "tok"})
 
 	def test_build_failure_response_shape(self):
 		resp = self.service.build_failure_response()
-		self.assertEqual(resp, {"status": "FAILED", "message": "Authentication Failed"})
+		self.assertEqual(resp, {"status_code": "01", "message": "Invalid Credential"})
 		# Must not leak a token or a cause.
 		self.assertNotIn("token", resp)
 
@@ -209,7 +209,7 @@ class TestAuthenticationService(FrappeTestCase):
 			payload={"username": TEST_USERNAME, "password": TEST_PASSWORD}, decrypted=True
 		)
 		self.assertTrue(result["succeeded"])
-		self.assertEqual(result["response"]["status"], "SUCCESS")
+		self.assertEqual(result["response"]["status_code"], "00")
 		self.assertTrue(result["response"]["token"])
 		self.assertFalse(result["encrypted"])  # dev mode -> plain
 		self.assertFalse(result["crypto_failed"])
@@ -217,13 +217,13 @@ class TestAuthenticationService(FrappeTestCase):
 	def test_process_dev_wrong_credentials_returns_failure(self):
 		result = self.service.process(payload={"username": TEST_USERNAME, "password": "nope"}, decrypted=True)
 		self.assertFalse(result["succeeded"])
-		self.assertEqual(result["response"]["status"], "FAILED")
+		self.assertEqual(result["response"]["status_code"], "01")
 		self.assertFalse(result["encrypted"])
 
 	def test_process_dev_missing_field_returns_failure(self):
 		result = self.service.process(payload={"username": TEST_USERNAME}, decrypted=True)
 		self.assertFalse(result["succeeded"])
-		self.assertEqual(result["response"]["status"], "FAILED")
+		self.assertEqual(result["response"]["status_code"], "01")
 
 
 # --------------------------------------------------------------------------- #
@@ -276,7 +276,7 @@ class TestAuthenticationCryptoRoundTrip(FrappeTestCase):
 			client_private_key=client_private_key,
 			sbi_public_key=sbi_public_key,
 		)
-		self.assertEqual(decrypted_response["status"], "SUCCESS")
+		self.assertEqual(decrypted_response["status_code"], "00")
 
 	def test_prod_mode_tampered_envelope_returns_crypto_failed(self):
 		client_private_key, sbi_public_key = self._loaded_keypair()
@@ -296,7 +296,7 @@ class TestAuthenticationCryptoRoundTrip(FrappeTestCase):
 		self.assertFalse(result["succeeded"])
 		self.assertTrue(result["crypto_failed"])
 		self.assertFalse(result["encrypted"])  # plain JSON on crypto failure
-		self.assertEqual(result["response"]["status"], "FAILED")
+		self.assertEqual(result["response"]["status_code"], "01")
 
 	def _loaded_keypair(self):
 		private_pem, public_pem = _make_keypair_pem()
@@ -336,8 +336,8 @@ class TestAuthenticationEndpoint(FrappeTestCase):
 	def test_dev_mode_correct_credentials_returns_plain_success(self):
 		_set_settings_data(enable_encryption=0)
 		response = self._call({"username": TEST_USERNAME, "password": TEST_PASSWORD})
-		self.assertEqual(response["status"], "SUCCESS")
-		self.assertEqual(response["message"], "Authentication Successful")
+		self.assertEqual(response["status_code"], "00")
+		self.assertEqual(response["message"], "Login Successful")
 		self.assertTrue(response["token"])
 		# Plain JSON - no envelope.
 		self.assertNotIn("data", response)
@@ -348,15 +348,15 @@ class TestAuthenticationEndpoint(FrappeTestCase):
 	def test_dev_mode_wrong_password_returns_plain_failure(self):
 		_set_settings_data(enable_encryption=0)
 		response = self._call({"username": TEST_USERNAME, "password": "wrong"})
-		self.assertEqual(response["status"], "FAILED")
-		self.assertEqual(response["message"], "Authentication Failed")
+		self.assertEqual(response["status_code"], "01")
+		self.assertEqual(response["message"], "Invalid Credential")
 		self.assertNotIn("token", response)
 		self.assertNotIn("data", response)
 
 	def test_dev_mode_missing_username_returns_failure(self):
 		_set_settings_data(enable_encryption=0)
 		response = self._call({"password": TEST_PASSWORD})
-		self.assertEqual(response["status"], "FAILED")
+		self.assertEqual(response["status_code"], "01")
 
 	# --- Production mode (encrypted) ---
 	def test_prod_mode_correct_credentials_returns_envelope_success(self):
@@ -374,7 +374,7 @@ class TestAuthenticationEndpoint(FrappeTestCase):
 			client_private_key=self.client_private_key,
 			sbi_public_key=self.sbi_public_key,
 		)
-		self.assertEqual(decrypted["status"], "SUCCESS")
+		self.assertEqual(decrypted["status_code"], "00")
 		self.assertTrue(decrypted["token"])
 
 	def test_prod_mode_tampered_returns_plain_failure(self):
@@ -391,5 +391,5 @@ class TestAuthenticationEndpoint(FrappeTestCase):
 		response = self._call(envelope)
 		# Plain JSON (crypto failure), not an envelope.
 		self.assertNotIn("data", response)
-		self.assertEqual(response["status"], "FAILED")
-		self.assertEqual(response["message"], "Authentication Failed")
+		self.assertEqual(response["status_code"], "01")
+		self.assertEqual(response["message"], "Decryption/signature failed")

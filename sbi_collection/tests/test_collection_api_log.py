@@ -131,11 +131,11 @@ class TestCollectionApiLog(FrappeTestCase):
 	def test_authenticate_creates_and_finalises_log(self):
 		# Call the whitelisted endpoint directly. With the real authentication
 		# implementation in place, calling authenticate() with no body and no
-		# configured credentials returns FAILED and the log is marked Failed.
+		# configured credentials returns status_code 01 and the log is marked Failed.
 		# This test just verifies the log lifecycle (create -> finalise) is
 		# exercised end-to-end by the endpoint.
 		result = api.authenticate()
-		self.assertEqual(result["status"], "FAILED")
+		self.assertEqual(result["status_code"], "01")
 
 		# The most recent log row should be our authenticate call, now finalised.
 		name = frappe.db.get_value(

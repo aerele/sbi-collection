@@ -210,13 +210,13 @@ class TestDealerValidationService(FrappeTestCase):
 	def test_build_success_response_shape(self):
 		self.assertEqual(
 			self.service.build_success_response("DV-CUST-FOUND"),
-			{"status_code": "00", "message": "Dealer verified Successfully"},
+			{"status_code": "00", "message": "Success", "request_id": ""},
 		)
 
 	def test_build_failure_response_shape(self):
 		self.assertEqual(
 			self.service.build_failure_response("Dealer not found"),
-			{"status_code": "01", "message": "Dealer not found"},
+			{"status_code": "01", "message": "Dealer not found", "request_id": ""},
 		)
 
 	# --- process (orchestration) ---
@@ -235,7 +235,7 @@ class TestDealerValidationService(FrappeTestCase):
 		self.assertFalse(result["succeeded"])
 		self.assertIsNone(result["customer"])
 		self.assertEqual(result["response"]["status_code"], "01")
-		self.assertIn("UNKNOWN-VAN", result["response"]["message"])
+		self.assertEqual(result["response"]["message"], "Invalid Van")
 
 	def test_process_failure_when_field_missing(self):
 		result = self.service.process({"van": "NEDFER00000001"})  # amount/date_time missing
@@ -356,7 +356,7 @@ class TestDealerValidationEndpoint(FrappeTestCase):
 			sbi_public_key=self.sbi_public_key,
 		)
 		self.assertEqual(decrypted["status_code"], "00")
-		self.assertEqual(decrypted["message"], "Dealer verified Successfully")
+		self.assertEqual(decrypted["message"], "Success")
 
 	def test_endpoint_unknown_van_returns_encrypted_failure(self):
 		"""Unknown VAN -> business failure -> encrypted envelope with status 01."""
@@ -408,26 +408,36 @@ class TestDealerValidationEndpoint(FrappeTestCase):
 		)
 		self.assertEqual(decrypted["status_code"], "01")
 
-	def test_endpoint_missing_token_returns_plain_failure(self):
-		"""No `token` header -> rejected before processing, plain JSON 01."""
+	def test_endpoint_missing_token_returns_encrypted_failure(self):
+		"""No `token` header -> rejected before processing, encrypted JSON 01."""
 		envelope = _make_envelope(
 			{"van": "NEDFER00000077", "amount": "300.00", "date_time": "12-05-2023"},
 			self.client_private_key,
 			self.sbi_public_key,
 		)
 		response = self._call_endpoint(envelope, token=None)
-		self.assertNotIn("data", response)  # plain JSON, not an envelope
+		self.assertEqual(set(response), {"data", "hash_digest", "session_key"})
+		response = crypto.decrypt_request(
+			response,
+			client_private_key=self.client_private_key,
+			sbi_public_key=self.sbi_public_key,
+		)
 		self.assertEqual(response["status_code"], "01")
-		self.assertEqual(response["message"], "Authentication required")
+		self.assertEqual(response["message"], "Invalid token")
 
-	def test_endpoint_invalid_token_returns_plain_failure(self):
-		"""Tampered token -> rejected, plain JSON 01."""
+	def test_endpoint_invalid_token_returns_encrypted_failure(self):
+		"""Tampered token -> rejected, encrypted JSON 01."""
 		envelope = _make_envelope(
 			{"van": "NEDFER00000077", "amount": "300.00", "date_time": "12-05-2023"},
 			self.client_private_key,
 			self.sbi_public_key,
 		)
 		response = self._call_endpoint(envelope, token="not-a-valid-jwt")
-		self.assertNotIn("data", response)
+		self.assertEqual(set(response), {"data", "hash_digest", "session_key"})
+		response = crypto.decrypt_request(
+			response,
+			client_private_key=self.client_private_key,
+			sbi_public_key=self.sbi_public_key,
+		)
 		self.assertEqual(response["status_code"], "01")
-		self.assertEqual(response["message"], "Authentication required")
+		self.assertEqual(response["message"], "Invalid token")

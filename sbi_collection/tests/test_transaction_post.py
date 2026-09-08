@@ -224,11 +224,11 @@ class TestTransactionPostService(FrappeTestCase):
 		self.assertIsNone(self.service.check_duplicate_transaction(utr, TEST_COMPANY))
 
 	# --- response builders (exact SBI shape) ---
-	def test_build_success_response_is_space_message(self):
-		# The SBI document defines the success message as a single space.
+	def test_build_success_response_is_success(self):
+		# SBI's latest UAT message overrides the PDF.
 		self.assertEqual(
 			self.service.build_success_response(),
-			{"status_code": "00", "message": " "},
+			{"status_code": "00", "message": "Success"},
 		)
 
 	def test_build_failure_response_shape(self):
@@ -408,7 +408,7 @@ class TestTransactionPostEndpoint(FrappeTestCase):
 			sbi_public_key=self.sbi_public_key,
 		)
 		self.assertEqual(decrypted["status_code"], "00")
-		self.assertEqual(decrypted["message"], " ")  # the literal space per the doc
+		self.assertEqual(decrypted["message"], "Success")
 
 		# A real DRAFT (docstatus 0, not submitted) Payment Entry must exist for
 		# this UTR - left for manual verification + reconciliation.
@@ -442,8 +442,8 @@ class TestTransactionPostEndpoint(FrappeTestCase):
 		# No PE should have been created.
 		self.assertFalse(frappe.db.exists("Payment Entry", {"reference_no": utr, "company": TEST_COMPANY}))
 
-	def test_endpoint_missing_token_returns_plain_failure(self):
-		"""No `token` header -> rejected before processing, plain JSON 01."""
+	def test_endpoint_missing_token_returns_encrypted_failure(self):
+		"""No token header -> encrypted failure before business processing."""
 		utr = self._next_utr()
 		envelope = _make_envelope(
 			_make_valid_payload(utr=utr),
@@ -451,14 +451,19 @@ class TestTransactionPostEndpoint(FrappeTestCase):
 			self.sbi_public_key,
 		)
 		response = self._call_endpoint(envelope, token=None)
-		self.assertNotIn("data", response)
+		self.assertEqual(set(response), {"data", "hash_digest", "session_key"})
+		response = crypto.decrypt_request(
+			response,
+			client_private_key=self.client_private_key,
+			sbi_public_key=self.sbi_public_key,
+		)
 		self.assertEqual(response["status_code"], "01")
-		self.assertEqual(response["message"], "Authentication required")
+		self.assertEqual(response["message"], "Invalid token")
 		# No PE created.
 		self.assertFalse(frappe.db.exists("Payment Entry", {"reference_no": utr, "company": TEST_COMPANY}))
 
-	def test_endpoint_invalid_token_returns_plain_failure(self):
-		"""Invalid token -> rejected, plain JSON 01, no PE created."""
+	def test_endpoint_invalid_token_returns_encrypted_failure(self):
+		"""Invalid token -> encrypted failure, no PE created."""
 		utr = self._next_utr()
 		envelope = _make_envelope(
 			_make_valid_payload(utr=utr),
@@ -466,6 +471,11 @@ class TestTransactionPostEndpoint(FrappeTestCase):
 			self.sbi_public_key,
 		)
 		response = self._call_endpoint(envelope, token="not-a-valid-jwt")
-		self.assertNotIn("data", response)
+		self.assertEqual(set(response), {"data", "hash_digest", "session_key"})
+		response = crypto.decrypt_request(
+			response,
+			client_private_key=self.client_private_key,
+			sbi_public_key=self.sbi_public_key,
+		)
 		self.assertEqual(response["status_code"], "01")
-		self.assertEqual(response["message"], "Authentication required")
+		self.assertEqual(response["message"], "Invalid token")

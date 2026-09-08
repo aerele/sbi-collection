@@ -9,7 +9,7 @@ exact response payload mandated by the SBI Collection integration document.
 
 SBI Dealer Validation contract (from the integration document):
     - Request  (decrypted): {"van","amount","date_time"}  (date_time = DD-MM-YYYY)
-    - Success response:     {"status_code":"00","message":"Dealer verified Successfully"}
+    - Success response:     {"status_code":"00","message":"Success","request_id":"..."}
     - Failure response:     {"status_code":"01","message":"<rejection text>"}
     - status_code 00 = Success, 01 = Failure/rejection.
 
@@ -23,6 +23,8 @@ reply. Only genuinely unexpected errors propagate.
 import frappe
 from frappe import _
 
+from sbi_collection.services.validation import validate_amount
+
 # Mandatory request fields per the SBI Dealer Validation specification.
 MANDATORY_FIELDS = ("van", "amount", "date_time")
 
@@ -30,7 +32,7 @@ MANDATORY_FIELDS = ("van", "amount", "date_time")
 STATUS_SUCCESS = "00"
 STATUS_FAILURE = "01"
 
-SUCCESS_MESSAGE = "Dealer verified Successfully"
+SUCCESS_MESSAGE = "Success"
 
 
 class DealerValidationService:
@@ -44,7 +46,8 @@ class DealerValidationService:
 		for field in MANDATORY_FIELDS:
 			value = payload.get(field)
 			if value is None or (isinstance(value, str) and not value.strip()):
-				frappe.throw(_("Missing mandatory field: {0}").format(field))
+				raise frappe.ValidationError(_("Missing mandatory field: {0}").format(field))
+		validate_amount(payload["amount"], allow_zero=True)
 
 	def extract_van(self, payload):
 		"""Return the VAN from the decrypted payload, whitespace-stripped."""
@@ -60,23 +63,20 @@ class DealerValidationService:
 			return None
 		return frappe.db.get_value("Customer", {"collection_van": van})
 
-	def build_success_response(self, customer):
-		"""Build the SBI success payload.
-
-		Note: the document lists `request_id` as OPTIONAL and the Dealer
-		Validation request carries none, so we omit it by default. If SBI's UAT
-		requires a correlation id, add it here.
-		"""
+	def build_success_response(self, customer, request_id=""):
+		"""Build the UAT success payload, always including request_id."""
 		return {
 			"status_code": STATUS_SUCCESS,
 			"message": SUCCESS_MESSAGE,
+			"request_id": request_id,
 		}
 
-	def build_failure_response(self, message):
+	def build_failure_response(self, message, request_id=""):
 		"""Build the SBI failure payload with the given rejection message."""
 		return {
 			"status_code": STATUS_FAILURE,
 			"message": message,
+			"request_id": request_id,
 		}
 
 	def process(self, decrypted_payload):
@@ -92,12 +92,13 @@ class DealerValidationService:
 		"""
 		van = ""
 		customer = None
+		request_id = decrypted_payload.get("request_id") or ""
 
 		try:
 			self.validate_request(decrypted_payload)
 		except frappe.ValidationError as error:
 			return self._result(
-				response=self.build_failure_response(str(error)),
+				response=self.build_failure_response(str(error), request_id),
 				van=van,
 				customer=customer,
 				succeeded=False,
@@ -107,14 +108,14 @@ class DealerValidationService:
 		customer = self.get_customer_by_van(van)
 		if not customer:
 			return self._result(
-				response=self.build_failure_response(_("Dealer not found for VAN: {0}").format(van)),
+				response=self.build_failure_response("Invalid Van", request_id),
 				van=van,
 				customer=None,
 				succeeded=False,
 			)
 
 		return self._result(
-			response=self.build_success_response(customer),
+			response=self.build_success_response(customer, request_id),
 			van=van,
 			customer=customer,
 			succeeded=True,
