@@ -206,7 +206,7 @@ before_uninstall = "sbi_collection.uninstall.before_uninstall"
 # Request Events
 # ----------------
 # before_request = ["sbi_collection.utils.before_request"]
-# after_request = ["sbi_collection.utils.after_request"]
+after_request = ["sbi_collection.api.normalize_parse_failure"]
 
 # Job Events
 # ----------
@@ -257,4 +257,3 @@ default_log_clearing_doctypes = {
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-

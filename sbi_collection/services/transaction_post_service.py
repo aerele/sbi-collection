@@ -7,7 +7,7 @@ SBI Transaction Post contract (from the integration document):
     - Request  (decrypted): {"van","amount","date_time","request_id",
                             "trans_typ","ref_id","utr_no"}
       Mandatory: van, amount, date_time, utr_no.
-    - Success response:     {"status_code":"00","message":" "}  (literal space)
+    - Success response:     {"status_code":"00","message":"Success"}
     - Failure response:     {"status_code":"01","message":"<text>"}
 
 Flow: validate -> find Customer by VAN -> duplicate-check by UTR -> create a
@@ -18,6 +18,7 @@ import frappe
 from frappe import _
 
 from sbi_collection.services import payment_service
+from sbi_collection.services.validation import validate_amount
 
 # Mandatory request fields per the SBI Transaction Post specification.
 MANDATORY_FIELDS = ("van", "amount", "date_time", "utr_no")
@@ -26,8 +27,8 @@ MANDATORY_FIELDS = ("van", "amount", "date_time", "utr_no")
 STATUS_SUCCESS = "00"
 STATUS_FAILURE = "01"
 
-# The success message per the SBI document is a single space (" ").
-SUCCESS_MESSAGE = " "
+# SBI's latest UAT email overrides the PDF's single-space success message.
+SUCCESS_MESSAGE = "Success"
 
 
 class TransactionPostService:
@@ -41,7 +42,8 @@ class TransactionPostService:
 		for field in MANDATORY_FIELDS:
 			value = payload.get(field)
 			if value is None or (isinstance(value, str) and not value.strip()):
-				frappe.throw(_("Missing mandatory field: {0}").format(field))
+				raise frappe.ValidationError(_("Missing mandatory field: {0}").format(field))
+		validate_amount(payload["amount"], allow_zero=False)
 
 	def extract_fields(self, payload):
 		"""Return a dict of the SBI-relevant fields from the decrypted payload."""
@@ -81,7 +83,7 @@ class TransactionPostService:
 		)
 
 	def build_success_response(self):
-		"""SBI success payload. Note: the document defines message as a space."""
+		"""SBI success payload from the latest UAT contract."""
 		return {"status_code": STATUS_SUCCESS, "message": SUCCESS_MESSAGE}
 
 	def build_failure_response(self, message):
@@ -120,9 +122,7 @@ class TransactionPostService:
 		customer = self.get_customer_by_van(fields["van"])
 		if not customer:
 			return self._result(
-				response=self.build_failure_response(
-					_("Customer not found for VAN: {0}").format(fields["van"])
-				),
+				response=self.build_failure_response("Invalid Van"),
 				van=fields["van"],
 				customer=None,
 				transaction_reference=fields["utr"],
