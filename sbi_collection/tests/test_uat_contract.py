@@ -171,8 +171,7 @@ class TestUATContract(unittest.TestCase):
 		)
 		self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
 		self.assertEqual(response.mimetype, "application/json")
-		self.assertEqual(set(response.get_json()), {"message"})
-		return response.get_json()["message"]
+		return response.get_json()
 
 	def _decrypt(self, envelope):
 		self.assertEqual(set(envelope), {"data", "hash_digest", "session_key"})

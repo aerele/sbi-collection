@@ -7,6 +7,7 @@ import json
 
 import frappe
 import jwt
+from werkzeug.wrappers import Response
 
 from sbi_collection import crypto
 from sbi_collection.sbi_collection.doctype.sbi_collection_settings.sbi_collection_settings import (
@@ -22,6 +23,18 @@ from sbi_collection.utils.logger import create_api_log, mark_failed, mark_succes
 
 ENVELOPE_FIELDS = ("data", "hash_digest", "session_key")
 ENDPOINTS = ("authenticate", "dealer_validation", "transaction_post")
+
+
+def _http_response(payload):
+	"""Return SBI JSON directly; Frappe otherwise wraps it under ``message``."""
+	request = getattr(frappe, "request", None)
+	if request is not None and callable(getattr(request, "get_data", None)):
+		return Response(
+			json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
+			status=200,
+			content_type="application/json",
+		)
+	return payload
 
 
 def _get_request_payload():
@@ -188,19 +201,19 @@ def _handle(api_name, service):
 @frappe.whitelist(allow_guest=True)
 def authenticate():
 	"""Issue an SBI JWT; plaintext is allowed only with encryption disabled."""
-	return _handle("authenticate", authentication_service)
+	return _http_response(_handle("authenticate", authentication_service))
 
 
 @frappe.whitelist(allow_guest=True)
 def dealer_validation():
 	"""Validate a VAN and amount, echoing the optional request_id."""
-	return _handle("dealer_validation", dealer_validation_service)
+	return _http_response(_handle("dealer_validation", dealer_validation_service))
 
 
 @frappe.whitelist(allow_guest=True)
 def transaction_post():
 	"""SBI MIS callback: create a draft Payment Entry with the existing UTR guard."""
-	return _handle("transaction_post", transaction_post_service)
+	return _http_response(_handle("transaction_post", transaction_post_service))
 
 
 def normalize_parse_failure(request, response):
@@ -222,4 +235,4 @@ def normalize_parse_failure(request, response):
 	response.status_code = 200
 	log_diagnostic(api_name, "framework_parse_failure_normalized")
 	response.mimetype = "application/json"
-	response.set_data(json.dumps({"message": _failure("Decryption/signature failed", api_name)}))
+	response.set_data(json.dumps(_failure("Decryption/signature failed", api_name)))
