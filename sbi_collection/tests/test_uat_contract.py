@@ -24,7 +24,7 @@ with patch.object(frappe, "logger", return_value=logging.getLogger(__name__)):
 	import frappe.handler
 
 	from sbi_collection import api, crypto
-	from sbi_collection.services import authentication_service, payment_service
+	from sbi_collection.services import authentication_service, dealer_validation_service, payment_service
 	from sbi_collection.services.dealer_validation_service import DealerValidationService
 	from sbi_collection.services.transaction_post_service import TransactionPostService
 	from sbi_collection.utils import diagnostics
@@ -51,6 +51,14 @@ class TestUATContract(unittest.TestCase):
 		self.entries = {}
 		self.documents = []
 		self.diagnostic_records = []
+		self.generated_request_ids = []
+		self.enterContext(
+			patch.object(
+				dealer_validation_service,
+				"generate_request_id",
+				side_effect=self._next_request_id,
+			)
+		)
 		self.enterContext(patch.object(diagnostics, "UAT_DIAGNOSTICS_ENABLED", True))
 		self.db = Mock()
 		self.db.get_value.side_effect = self._get_value
@@ -97,6 +105,15 @@ class TestUATContract(unittest.TestCase):
 			self.enterContext(patch.object(frappe.local, name, value, create=True))
 		self.valid_token = self._token()
 		self.client = Client(self._application, Response)
+
+	def _next_request_id(self):
+		request_id = f"20260911135330{len(self.generated_request_ids) + 1:05d}"
+		self.generated_request_ids.append(request_id)
+		return request_id
+
+	def assert_generated_request_id(self, response):
+		self.assertRegex(response["request_id"], r"^\d{19}$")
+		self.assertIn(response["request_id"], self.generated_request_ids)
 
 	def _get_settings(self, doctype, *args, **kwargs):
 		self.assertEqual(doctype, "SBI Collection Settings", "Unexpected document access")
@@ -245,7 +262,7 @@ class TestUATContract(unittest.TestCase):
 		response = self._decrypt(self._call("authenticate", {}))
 		self.assertEqual(response, {"status_code": "01", "message": "Invalid Credential"})
 
-	def test_dealer_success_zero_negative_and_invalid_van_with_optional_request_id(self):
+	def test_dealer_generates_request_id_for_success_and_failure(self):
 		for request_id in (None, "", "65432789677"):
 			for amount, van, code, message in (
 				("300.00", "VALID-VAN", "00", "Success"),
@@ -259,10 +276,12 @@ class TestUATContract(unittest.TestCase):
 					payload = self._business_payload(amount=amount, van=van)
 					if request_id is not None:
 						payload["request_id"] = request_id
-					self.assertEqual(
-						self._decrypt(self._call("dealer_validation", payload)),
-						{"status_code": code, "message": message, "request_id": request_id or ""},
-					)
+					response = self._decrypt(self._call("dealer_validation", payload))
+					self.assertEqual(response["status_code"], code)
+					self.assertEqual(response["message"], message)
+					self.assert_generated_request_id(response)
+					self.assertNotEqual(response["request_id"], request_id)
+		self.assertEqual(len(self.generated_request_ids), len(set(self.generated_request_ids)))
 		self.assertFalse(self.documents)
 
 	def test_invalid_tokens_are_encrypted_without_business_processing(self):
@@ -280,9 +299,11 @@ class TestUATContract(unittest.TestCase):
 						if request_id is not None:
 							payload["request_id"] = request_id
 						expected = {"status_code": "01", "message": "Invalid token"}
+						response = self._decrypt(self._call(endpoint, payload, token=token))
 						if endpoint == "dealer_validation":
-							expected["request_id"] = request_id or ""
-						self.assertEqual(self._decrypt(self._call(endpoint, payload, token=token)), expected)
+							self.assert_generated_request_id(response)
+							response.pop("request_id")
+						self.assertEqual(response, expected)
 		self.db.get_value.assert_not_called()
 		self.db.exists.assert_not_called()
 		self.assertFalse(self.documents)
@@ -347,14 +368,14 @@ class TestUATContract(unittest.TestCase):
 				self.assertEqual(response["status_code"], "01")
 				self.assertEqual(response["message"], "Request processing failed")
 				if endpoint == "dealer_validation":
-					self.assertEqual(response["request_id"], "REQ")
+					self.assert_generated_request_id(response)
 
 	def test_missing_business_fields_are_encrypted(self):
 		for endpoint in ("dealer_validation", "transaction_post"):
 			response = self._decrypt(self._call(endpoint, {"request_id": "REQ"}))
 			self.assertEqual(response["status_code"], "01")
 			if endpoint == "dealer_validation":
-				self.assertEqual(response["request_id"], "REQ")
+				self.assert_generated_request_id(response)
 
 	def test_frappe_throw_does_not_leak_plaintext_server_messages(self):
 		with patch.object(
@@ -384,7 +405,7 @@ class TestUATContract(unittest.TestCase):
 					self.assertEqual(response["message"], "Decryption/signature failed")
 					self.assertNotIn("data", response)
 					if endpoint == "dealer_validation":
-						self.assertEqual(response["request_id"], "")
+						self.assert_generated_request_id(response)
 
 	def test_raw_body_fallback_with_wrong_content_type(self):
 		for endpoint in api.ENDPOINTS:
@@ -433,7 +454,9 @@ class TestUATContract(unittest.TestCase):
 			log.side_effect = frappe.ValidationError("log unavailable")
 		self.framework_log.side_effect = frappe.ValidationError("Error Log unavailable")
 		response = self._decrypt(self._call("dealer_validation", self._business_payload()))
-		self.assertEqual(response, {"status_code": "00", "message": "Success", "request_id": ""})
+		self.assertEqual(response["status_code"], "00")
+		self.assertEqual(response["message"], "Success")
+		self.assert_generated_request_id(response)
 
 	def test_uat_error_logs_retain_authentication_checks_and_processing_stages(self):
 		self._call("authenticate", {"username": "uat-user", "password": "wrong"})
@@ -509,10 +532,10 @@ class TestUATContract(unittest.TestCase):
 		self.assertEqual(response, {"status_code": "01", "message": "Response encryption failed"})
 
 	def test_service_response_builders_match_uat(self):
-		self.assertEqual(
-			DealerValidationService().build_success_response("Test Customer"),
-			{"status_code": "00", "message": "Success", "request_id": ""},
-		)
+		dealer_response = DealerValidationService().build_success_response("Test Customer")
+		self.assertEqual(dealer_response["status_code"], "00")
+		self.assertEqual(dealer_response["message"], "Success")
+		self.assert_generated_request_id(dealer_response)
 		self.assertEqual(
 			TransactionPostService().build_success_response(),
 			{"status_code": "00", "message": "Success"},

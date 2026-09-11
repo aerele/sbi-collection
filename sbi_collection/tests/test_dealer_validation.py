@@ -209,15 +209,34 @@ class TestDealerValidationService(FrappeTestCase):
 	# --- response builders (exact SBI shape) ---
 	def test_build_success_response_shape(self):
 		self.assertEqual(
-			self.service.build_success_response("DV-CUST-FOUND"),
-			{"status_code": "00", "message": "Success", "request_id": ""},
+			self.service.build_success_response("DV-CUST-FOUND", "2026091113533000001"),
+			{"status_code": "00", "message": "Success", "request_id": "2026091113533000001"},
 		)
 
 	def test_build_failure_response_shape(self):
 		self.assertEqual(
-			self.service.build_failure_response("Dealer not found"),
-			{"status_code": "01", "message": "Dealer not found", "request_id": ""},
+			self.service.build_failure_response("Dealer not found", "2026091113533000002"),
+			{"status_code": "01", "message": "Dealer not found", "request_id": "2026091113533000002"},
 		)
+
+	def test_generate_request_id_uses_timestamp_and_atomic_series(self):
+		with (
+			patch.object(
+				frappe.utils,
+				"now_datetime",
+				return_value=datetime(2026, 9, 11, 13, 53, 30),
+			),
+			patch.object(
+				dealer_validation_service,
+				"make_autoname",
+				return_value="2026091113533000001",
+			) as make_autoname,
+		):
+			self.assertEqual(
+				dealer_validation_service.generate_request_id(),
+				"2026091113533000001",
+			)
+		make_autoname.assert_called_once_with("20260911135330.#####")
 
 	# --- process (orchestration) ---
 	def test_process_success_when_customer_exists(self):

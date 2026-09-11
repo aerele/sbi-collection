@@ -72,7 +72,7 @@ def _looks_like_envelope(body):
 def _failure(message, api_name, payload=None):
 	response = {"status_code": "01", "message": message}
 	if api_name == "dealer_validation":
-		response["request_id"] = (payload or {}).get("request_id") or ""
+		response["request_id"] = dealer_validation_service.generate_request_id()
 	return response
 
 
@@ -110,7 +110,7 @@ def _handle(api_name, service):
 	keys = None
 	payload = None
 	secure_response = False
-	response = _failure("Decryption/signature failed", api_name)
+	response = None
 	stage = "settings_load"
 	try:
 		settings = get_settings()
@@ -143,7 +143,6 @@ def _handle(api_name, service):
 		# A verified JSON payload of the wrong type is still answered securely.
 		if not isinstance(payload, dict):
 			payload = {}
-		response = _failure("Invalid request", api_name, payload)
 		try:
 			if api_name == "authenticate":
 				result = service.process(payload=payload, decrypted=True)
@@ -153,7 +152,11 @@ def _handle(api_name, service):
 				_safe_log(
 					update_api_log,
 					log_name,
-					request_id=payload.get("request_id"),
+					request_id=(
+						result["response"].get("request_id")
+						if api_name == "dealer_validation"
+						else payload.get("request_id")
+					),
 					van=result.get("van"),
 					customer=result.get("customer"),
 					transaction_reference=result.get("transaction_reference"),
@@ -170,7 +173,7 @@ def _handle(api_name, service):
 	except Exception as error:
 		log_diagnostic(api_name, f"{stage}_failed", error=error)
 		# Malformed/unverifiable envelope or unavailable keys: controlled plain failure.
-		pass
+		response = _failure("Decryption/signature failed", api_name)
 
 	logged_response = {**response}
 	if "token" in logged_response:
@@ -206,7 +209,7 @@ def authenticate():
 
 @frappe.whitelist(allow_guest=True)
 def dealer_validation():
-	"""Validate a VAN and amount, echoing the optional request_id."""
+	"""Validate a VAN and amount, returning a unique response request_id."""
 	return _http_response(_handle("dealer_validation", dealer_validation_service))
 
 
