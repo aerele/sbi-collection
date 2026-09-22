@@ -19,12 +19,42 @@ full amount in `unallocated_amount`). Invoice allocation / reconciliation is a
 later phase - doing it here would risk auto-allocating against the wrong invoice.
 """
 
+from contextlib import contextmanager
+from functools import wraps
+
 import frappe
 from erpnext.accounts.party import get_party_account
 from frappe.utils import flt, getdate
 
 # SBI date_time format (per the integration document) is DD-MM-YYYY.
 SBI_DATE_FORMAT = "%d-%m-%Y"
+
+
+@contextmanager
+def _account_permission_scope():
+	"""Temporarily allow ERPNext account lookups for the trusted SBI flow.
+
+	The Transaction Post endpoint runs as Guest, while ERPNext's party-account
+	resolver checks account permissions before the Payment Entry exists. Preserve
+	the incoming flag value so nested callers and exception paths remain safe.
+	"""
+	previous_value = getattr(frappe.flags, "ignore_account_permission", False)
+	frappe.flags.ignore_account_permission = True
+	try:
+		yield
+	finally:
+		frappe.flags.ignore_account_permission = previous_value
+
+
+def _with_account_permission_scope(method):
+	"""Run a trusted Payment Entry operation inside the account-permission scope."""
+
+	@wraps(method)
+	def wrapped(*args, **kwargs):
+		with _account_permission_scope():
+			return method(*args, **kwargs)
+
+	return wrapped
 
 
 def _resolve_receivable_account(customer, company):
@@ -90,6 +120,7 @@ def _parse_sbi_date(date_time):
 		return getdate()
 
 
+@_with_account_permission_scope
 def create_payment_entry(
 	*,
 	customer,
@@ -160,16 +191,14 @@ def create_payment_entry(
 	pe.paid_from_account_currency, pe.paid_from_account_type = _account_currency_and_type(receivable)
 	pe.paid_to_account_currency, pe.paid_to_account_type = _account_currency_and_type(bank_ledger)
 
-	# Bypass GL account perms (india_banking idiom) + doctype role perms (Guest caller).
-	frappe.flags.ignore_account_permission = True
+	# Bypass doctype role permissions for the authenticated Guest caller. Account
+	# permission bypassing is scoped across this entire function by the decorator,
+	# including the earlier customer receivable-account lookup.
 	pe.flags.ignore_permissions = True
-	try:
-		pe.setup_party_account_field()
-		pe.set_missing_values()
-		pe.validate()
-		pe.insert(ignore_permissions=True, ignore_mandatory=True)
-		# Intentionally NOT submitted - left as a draft for manual reconciliation.
-	finally:
-		frappe.flags.ignore_account_permission = False
+	pe.setup_party_account_field()
+	pe.set_missing_values()
+	pe.validate()
+	pe.insert(ignore_permissions=True, ignore_mandatory=True)
+	# Intentionally NOT submitted - left as a draft for manual reconciliation.
 
 	return pe.name
