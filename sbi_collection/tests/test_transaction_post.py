@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from frappe.tests.utils import FrappeTestCase
 
 from sbi_collection import api, crypto
-from sbi_collection.services import transaction_post_service
+from sbi_collection.services import payment_service, transaction_post_service
 from sbi_collection.services.transaction_post_service import (
 	MANDATORY_FIELDS,
 	TransactionPostService,
@@ -164,6 +164,44 @@ def _cancel_and_delete_payment_entry(utr):
 # --------------------------------------------------------------------------- #
 # Layer 1: Service unit tests
 # --------------------------------------------------------------------------- #
+class TestPaymentServicePermissions(FrappeTestCase):
+	def tearDown(self):
+		frappe.flags.ignore_account_permission = False
+		super().tearDown()
+
+	def test_account_permission_scope_restores_previous_value(self):
+		for previous_value in (False, True):
+			with self.subTest(previous_value=previous_value):
+				frappe.flags.ignore_account_permission = previous_value
+				with payment_service._account_permission_scope():
+					self.assertTrue(frappe.flags.ignore_account_permission)
+				self.assertEqual(frappe.flags.ignore_account_permission, previous_value)
+
+	def test_account_permission_is_enabled_before_receivable_lookup_and_restored_on_error(self):
+		frappe.flags.ignore_account_permission = False
+
+		def fail_during_receivable_lookup(customer, company):
+			self.assertTrue(frappe.flags.ignore_account_permission)
+			raise RuntimeError("simulated account lookup failure")
+
+		with patch.object(
+			payment_service,
+			"_resolve_receivable_account",
+			side_effect=fail_during_receivable_lookup,
+		):
+			with self.assertRaisesRegex(RuntimeError, "simulated account lookup failure"):
+				payment_service.create_payment_entry(
+					customer="TEST-CUSTOMER",
+					company=TEST_COMPANY,
+					amount="100.00",
+					utr="TEST-UTR",
+					date_time="17-09-2026",
+					bank_account=TEST_BANK_ACCOUNT,
+				)
+
+		self.assertFalse(frappe.flags.ignore_account_permission)
+
+
 class TestTransactionPostService(FrappeTestCase):
 	@classmethod
 	def setUpClass(cls):
