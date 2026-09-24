@@ -202,6 +202,101 @@ class TestPaymentServicePermissions(FrappeTestCase):
 		self.assertFalse(frappe.flags.ignore_account_permission)
 
 
+class TestReceivableAccountResolution(FrappeTestCase):
+	def test_customer_account_has_highest_precedence(self):
+		with (
+			patch.object(frappe.db, "get_value", return_value="Customer Receivable") as get_value,
+			patch.object(frappe, "get_cached_value") as get_cached_value,
+		):
+			account = payment_service._get_configured_receivable_account("CUSTOMER-1", "Company")
+
+		self.assertEqual(account, "Customer Receivable")
+		get_value.assert_called_once_with(
+			"Party Account",
+			{"parenttype": "Customer", "parent": "CUSTOMER-1", "company": "Company"},
+			"account",
+		)
+		get_cached_value.assert_not_called()
+
+	def test_customer_group_account_is_the_second_fallback(self):
+		with (
+			patch.object(frappe.db, "get_value", side_effect=[None, "Group Receivable"]),
+			patch.object(frappe, "get_cached_value", return_value="Dealers"),
+		):
+			account = payment_service._get_configured_receivable_account("CUSTOMER-1", "Company")
+
+		self.assertEqual(account, "Group Receivable")
+
+	def test_company_default_is_the_final_fallback(self):
+		def get_cached_value(doctype, name, fieldname):
+			if doctype == "Customer":
+				return "Dealers"
+			if doctype == "Company":
+				return "Company Receivable"
+			self.fail(f"Unexpected cached lookup: {doctype} {name} {fieldname}")
+
+		with (
+			patch.object(frappe.db, "get_value", side_effect=[None, None]),
+			patch.object(frappe, "get_cached_value", side_effect=get_cached_value),
+		):
+			account = payment_service._get_configured_receivable_account("CUSTOMER-1", "Company")
+
+		self.assertEqual(account, "Company Receivable")
+
+	def test_final_account_uses_core_validation_and_strict_receivable_checks(self):
+		row = frappe._dict(
+			company="Company",
+			account_type="Receivable",
+			account_currency="INR",
+			is_group=0,
+			disabled=0,
+		)
+		with (
+			patch.object(frappe.db, "get_value", return_value=row),
+			patch.object(payment_service, "validate_account_head") as validate_account,
+		):
+			account = payment_service._validate_receivable_account("Debtors", "Company")
+
+		self.assertEqual(account, "Debtors")
+		validate_account.assert_called_once_with(0, "Debtors", "Company", "Receivable")
+
+	def test_existing_ledger_account_is_used_when_configured_currency_differs(self):
+		with (
+			patch.object(
+				payment_service,
+				"_get_configured_receivable_account",
+				return_value="USD Debtors",
+			),
+			patch.object(payment_service, "get_party_gle_currency", return_value="INR"),
+			patch.object(payment_service, "get_party_gle_account", return_value="INR Debtors"),
+			patch.object(frappe, "get_cached_value", return_value="USD"),
+			patch.object(
+				payment_service,
+				"_validate_receivable_account",
+				side_effect=lambda account, company: account,
+			),
+		):
+			account = payment_service._resolve_receivable_account("CUSTOMER-1", "Company")
+
+		self.assertEqual(account, "INR Debtors")
+
+	def test_invalid_receivable_account_details_are_rejected(self):
+		invalid_rows = (
+			(None, "does not exist"),
+			(frappe._dict(disabled=1, account_type="Receivable", account_currency="INR"), "disabled"),
+			(frappe._dict(disabled=0, account_type="Bank", account_currency="INR"), "Receivable"),
+			(frappe._dict(disabled=0, account_type="Receivable", account_currency=None), "currency"),
+		)
+		for row, message in invalid_rows:
+			with self.subTest(message=message):
+				with (
+					patch.object(frappe.db, "get_value", return_value=row),
+					patch.object(payment_service, "validate_account_head"),
+				):
+					with self.assertRaisesRegex(frappe.ValidationError, message):
+						payment_service._validate_receivable_account("Debtors", "Company")
+
+
 class TestTransactionPostService(FrappeTestCase):
 	@classmethod
 	def setUpClass(cls):
@@ -292,11 +387,44 @@ class TestTransactionPostService(FrappeTestCase):
 		self.assertTrue(result["payment_entry"])
 		# The PE must be a DRAFT (docstatus 0, not submitted) so it can be
 		# verified + reconciled manually, and carry the UTR as reference_no.
-		_, pe_ds, pe_ref = frappe.db.get_value(
-			"Payment Entry", result["payment_entry"], ["name", "docstatus", "reference_no"]
+		pe = frappe.db.get_value(
+			"Payment Entry",
+			result["payment_entry"],
+			[
+				"name",
+				"docstatus",
+				"reference_no",
+				"party",
+				"paid_from",
+				"paid_to",
+				"paid_amount",
+				"unallocated_amount",
+			],
+			as_dict=True,
 		)
-		self.assertEqual(pe_ds, 0)
-		self.assertEqual(pe_ref, utr)
+		self.assertEqual(pe.docstatus, 0)
+		self.assertEqual(pe.reference_no, utr)
+		self.assertEqual(pe.party, cust)
+		self.assertEqual(pe.paid_from, TEST_RECEIVABLE)
+		self.assertEqual(pe.paid_to, TEST_BANK_LEDGER)
+		self.assertEqual(pe.paid_amount, 100)
+		self.assertEqual(pe.unallocated_amount, 100)
+
+	def test_process_succeeds_when_guest_account_permission_is_denied(self):
+		_, van = self._seed_customer()
+		utr = self._next_utr()
+		original_has_permission = frappe.has_permission
+
+		def deny_account_permission(doctype=None, *args, **kwargs):
+			if doctype == "Account":
+				raise frappe.PermissionError
+			return original_has_permission(doctype, *args, **kwargs)
+
+		with patch.object(frappe, "has_permission", side_effect=deny_account_permission):
+			result = self.service.process(_make_valid_payload(utr=utr, van=van))
+
+		self.assertTrue(result["succeeded"], msg=f"result={result}")
+		self.assertTrue(result["payment_entry"])
 
 	def test_process_unknown_van_returns_failure_no_pe(self):
 		utr = self._next_utr()
@@ -457,6 +585,49 @@ class TestTransactionPostEndpoint(FrappeTestCase):
 			as_dict=True,
 		)
 		self.assertIsNotNone(pe, "Payment Entry was not created")
+		self.assertEqual(pe.docstatus, 0)
+
+	def test_endpoint_ignores_injected_accounts_when_account_permission_is_denied(self):
+		"""The authenticated bank request cannot choose ERPNext ledger accounts."""
+		customer, van = self._seed_customer()
+		utr = self._next_utr()
+		payload = _make_valid_payload(utr=utr, van=van)
+		payload.update(
+			{
+				"company": "Injected Company",
+				"paid_from": "Injected Receivable",
+				"paid_to": "Injected Bank Ledger",
+			}
+		)
+		envelope = _make_envelope(payload, self.client_private_key, self.sbi_public_key)
+		original_has_permission = frappe.has_permission
+
+		def deny_account_permission(doctype=None, *args, **kwargs):
+			if doctype == "Account":
+				raise frappe.PermissionError
+			return original_has_permission(doctype, *args, **kwargs)
+
+		with patch.object(frappe, "has_permission", side_effect=deny_account_permission):
+			response = self._call_endpoint(envelope)
+
+		decrypted = crypto.decrypt_request(
+			response,
+			client_private_key=self.client_private_key,
+			sbi_public_key=self.sbi_public_key,
+		)
+		self.assertEqual(decrypted, {"status_code": "00", "message": "Success"})
+
+		pe = frappe.db.get_value(
+			"Payment Entry",
+			{"reference_no": utr, "company": TEST_COMPANY},
+			["party", "paid_from", "paid_to", "paid_amount", "docstatus"],
+			as_dict=True,
+		)
+		self.assertIsNotNone(pe, "Payment Entry was not created")
+		self.assertEqual(pe.party, customer)
+		self.assertEqual(pe.paid_from, TEST_RECEIVABLE)
+		self.assertEqual(pe.paid_to, TEST_BANK_LEDGER)
+		self.assertEqual(pe.paid_amount, 100)
 		self.assertEqual(pe.docstatus, 0)
 
 	def test_endpoint_crypto_failure_returns_plain_json(self):

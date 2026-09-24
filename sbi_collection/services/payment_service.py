@@ -23,8 +23,9 @@ from contextlib import contextmanager
 from functools import wraps
 
 import frappe
-from erpnext.accounts.party import get_party_account
-from frappe.utils import flt, getdate
+from erpnext.accounts.party import get_party_gle_account, get_party_gle_currency
+from erpnext.controllers.accounts_controller import validate_account_head
+from frappe.utils import cint, flt, getdate
 
 # SBI date_time format (per the integration document) is DD-MM-YYYY.
 SBI_DATE_FORMAT = "%d-%m-%Y"
@@ -57,17 +58,79 @@ def _with_account_permission_scope(method):
 	return wrapped
 
 
+def _get_configured_receivable_account(customer, company):
+	"""Resolve Customer -> Customer Group -> Company receivable configuration."""
+	account = frappe.db.get_value(
+		"Party Account",
+		{"parenttype": "Customer", "parent": customer, "company": company},
+		"account",
+	)
+	if account:
+		return account
+
+	customer_group = frappe.get_cached_value("Customer", customer, "customer_group")
+	if customer_group:
+		account = frappe.db.get_value(
+			"Party Account",
+			{"parenttype": "Customer Group", "parent": customer_group, "company": company},
+			"account",
+		)
+	if account:
+		return account
+
+	return frappe.get_cached_value("Company", company, "default_receivable_account")
+
+
+def _validate_receivable_account(account, company):
+	"""Validate a trusted receivable account without applying Guest permissions."""
+	row = frappe.db.get_value(
+		"Account",
+		account,
+		["company", "account_type", "account_currency", "is_group", "disabled"],
+		as_dict=True,
+	)
+	if not row:
+		frappe.throw(frappe._("Receivable Account {0} does not exist").format(account))
+
+	# Reuse ERPNext's core company and ledger-vs-group validation.
+	validate_account_head(0, account, company, frappe._("Receivable"))
+	if cint(row.disabled):
+		frappe.throw(frappe._("Receivable Account {0} is disabled").format(account))
+	if row.account_type != "Receivable":
+		frappe.throw(frappe._("Account {0} must have Account Type Receivable").format(account))
+	if not row.account_currency:
+		frappe.throw(frappe._("Receivable Account {0} has no currency configured").format(account))
+
+	return account
+
+
 def _resolve_receivable_account(customer, company):
-	"""Return the Customer's receivable account for `company`."""
-	account = get_party_account("Customer", customer, company)
+	"""Return the trusted receivable account without Guest permission checks.
+
+	ERPNext's public ``get_party_account`` performs an unconditional Account
+	permission check in some versions. The SBI endpoint runs as Guest after its
+	JWT is verified, so resolve the same trusted master-data hierarchy directly.
+	"""
+	account = _get_configured_receivable_account(customer, company)
+
+	# Match ERPNext's existing-ledger compatibility rule: a party that already
+	# has GL activity must continue on an account with that ledger currency.
+	existing_currency = get_party_gle_currency("Customer", customer, company)
+	if existing_currency:
+		account_currency = (
+			frappe.get_cached_value("Account", account, "account_currency") if account else None
+		)
+		if account_currency != existing_currency:
+			account = get_party_gle_account("Customer", customer, company)
+
 	if not account:
 		frappe.throw(
 			frappe._(
 				"No receivable account found for Customer {0} in company {1}. "
-				"Configure the Customer's Default Accounts (Party Account) row."
+				"Configure the Customer, Customer Group, or Company receivable account."
 			).format(customer, company)
 		)
-	return account
+	return _validate_receivable_account(account, company)
 
 
 def _resolve_bank_ledger_account(bank_account):

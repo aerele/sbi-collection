@@ -28,7 +28,13 @@ ENDPOINTS = ("authenticate", "dealer_validation", "transaction_post")
 def _http_response(payload):
 	"""Return SBI JSON directly; Frappe otherwise wraps it under ``message``."""
 	request = getattr(frappe, "request", None)
-	if request is not None and callable(getattr(request, "get_data", None)):
+	try:
+		has_http_request = request is not None and callable(getattr(request, "get_data", None))
+	except RuntimeError:
+		# Frappe exposes an unbound LocalProxy outside a real HTTP request (for
+		# example, direct endpoint calls from tests, console jobs, or patches).
+		has_http_request = False
+	if has_http_request:
 		return Response(
 			json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
 			status=200,
