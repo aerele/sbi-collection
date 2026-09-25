@@ -23,6 +23,7 @@ import frappe
 import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from erpnext.accounts.doctype.payment_entry.payment_entry import PaymentEntry
 from frappe.tests.utils import FrappeTestCase
 
 from sbi_collection import api, crypto
@@ -40,6 +41,7 @@ TEST_COMPANY = "ABC (Demo)"
 TEST_BANK_ACCOUNT = "ABC test - State Bank of India"
 TEST_BANK_LEDGER = "Demo Bank Account - AD"
 TEST_RECEIVABLE = "Debtors - AD"
+TEST_PAYMENT_ENTRY_USER = "sbi-payment-test@example.com"
 
 
 # --------------------------------------------------------------------------- #
@@ -110,6 +112,27 @@ def _set_settings(**values):
 	frappe.clear_document_cache("SBI Collection Settings", "SBI Collection Settings")
 
 
+def _ensure_payment_entry_user():
+	"""Create the least-privilege accounting user used by database tests."""
+	if not frappe.db.exists("User", TEST_PAYMENT_ENTRY_USER):
+		user = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": TEST_PAYMENT_ENTRY_USER,
+				"first_name": "SBI Payment Test",
+				"enabled": 1,
+				"user_type": "System User",
+				"send_welcome_email": 0,
+			}
+		).insert(ignore_permissions=True)
+	else:
+		user = frappe.get_doc("User", TEST_PAYMENT_ENTRY_USER)
+
+	if "Accounts User" not in frappe.get_roles(user.name):
+		user.add_roles("Accounts User")
+	return user.name
+
+
 def _make_customer(name, van, company=TEST_COMPANY, receivable=TEST_RECEIVABLE):
 	"""Create a Customer with a VAN and a receivable Party Account row."""
 	customer_group = frappe.db.get_single_value("Selling Settings", "customer_group") or frappe.db.get_value(
@@ -165,41 +188,31 @@ def _cancel_and_delete_payment_entry(utr):
 # Layer 1: Service unit tests
 # --------------------------------------------------------------------------- #
 class TestPaymentServicePermissions(FrappeTestCase):
-	def tearDown(self):
-		frappe.flags.ignore_account_permission = False
-		super().tearDown()
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		_ensure_payment_entry_user()
 
-	def test_account_permission_scope_restores_previous_value(self):
-		for previous_value in (False, True):
-			with self.subTest(previous_value=previous_value):
-				frappe.flags.ignore_account_permission = previous_value
-				with payment_service._account_permission_scope():
-					self.assertTrue(frappe.flags.ignore_account_permission)
-				self.assertEqual(frappe.flags.ignore_account_permission, previous_value)
+	def test_user_scope_switches_to_integration_user_and_restores_caller(self):
+		original_user = frappe.session.user
+		with payment_service._payment_entry_user_scope(TEST_PAYMENT_ENTRY_USER):
+			self.assertEqual(frappe.session.user, TEST_PAYMENT_ENTRY_USER)
+		self.assertEqual(frappe.session.user, original_user)
 
-	def test_account_permission_is_enabled_before_receivable_lookup_and_restored_on_error(self):
-		frappe.flags.ignore_account_permission = False
+	def test_user_scope_restores_caller_on_error(self):
+		original_user = frappe.session.user
+		with self.assertRaisesRegex(RuntimeError, "simulated accounting failure"):
+			with payment_service._payment_entry_user_scope(TEST_PAYMENT_ENTRY_USER):
+				self.assertEqual(frappe.session.user, TEST_PAYMENT_ENTRY_USER)
+				raise RuntimeError("simulated accounting failure")
+		self.assertEqual(frappe.session.user, original_user)
 
-		def fail_during_receivable_lookup(customer, company):
-			self.assertTrue(frappe.flags.ignore_account_permission)
-			raise RuntimeError("simulated account lookup failure")
-
-		with patch.object(
-			payment_service,
-			"_resolve_receivable_account",
-			side_effect=fail_during_receivable_lookup,
-		):
-			with self.assertRaisesRegex(RuntimeError, "simulated account lookup failure"):
-				payment_service.create_payment_entry(
-					customer="TEST-CUSTOMER",
-					company=TEST_COMPANY,
-					amount="100.00",
-					utr="TEST-UTR",
-					date_time="17-09-2026",
-					bank_account=TEST_BANK_ACCOUNT,
-				)
-
-		self.assertFalse(frappe.flags.ignore_account_permission)
+	def test_user_scope_rejects_guest_and_administrator(self):
+		for user in ("Guest", "Administrator"):
+			with self.subTest(user=user):
+				with self.assertRaisesRegex(frappe.ValidationError, "dedicated System User"):
+					with payment_service._payment_entry_user_scope(user):
+						pass
 
 
 class TestReceivableAccountResolution(FrappeTestCase):
@@ -304,7 +317,12 @@ class TestTransactionPostService(FrappeTestCase):
 		from sbi_collection.install import make_custom_fields
 
 		make_custom_fields()
-		_set_settings(default_company=TEST_COMPANY, bank_account=TEST_BANK_ACCOUNT)
+		_ensure_payment_entry_user()
+		_set_settings(
+			default_company=TEST_COMPANY,
+			bank_account=TEST_BANK_ACCOUNT,
+			payment_entry_user=TEST_PAYMENT_ENTRY_USER,
+		)
 
 	def setUp(self):
 		self.service = TransactionPostService()
@@ -426,6 +444,35 @@ class TestTransactionPostService(FrappeTestCase):
 		self.assertTrue(result["succeeded"], msg=f"result={result}")
 		self.assertTrue(result["payment_entry"])
 
+	def test_uat_balance_lookup_runs_as_integration_user_and_restores_guest(self):
+		"""Reproduce UAT's permission-protected lookup for empty/zero balances."""
+		_, van = self._seed_customer()
+		utr = self._next_utr()
+		original_user = frappe.session.user
+		original_set_missing_values = PaymentEntry.set_missing_values
+		lookup_users = []
+
+		def uat_set_missing_values(payment_entry):
+			# UAT calls this permission-protected lookup whenever either account
+			# balance is empty or zero. It must see the integration user, not Guest.
+			frappe.has_permission("Payment Entry", throw=True)
+			lookup_users.append(frappe.session.user)
+			original_set_missing_values(payment_entry)
+			payment_entry.paid_from_account_balance = 0
+			payment_entry.paid_to_account_balance = 0
+
+		try:
+			frappe.set_user("Guest")
+			with patch.object(PaymentEntry, "set_missing_values", uat_set_missing_values):
+				result = self.service.process(_make_valid_payload(utr=utr, van=van))
+
+			self.assertTrue(result["succeeded"], msg=f"result={result}")
+			self.assertTrue(lookup_users)
+			self.assertEqual(set(lookup_users), {TEST_PAYMENT_ENTRY_USER})
+			self.assertEqual(frappe.session.user, "Guest")
+		finally:
+			frappe.set_user(original_user)
+
 	def test_process_unknown_van_returns_failure_no_pe(self):
 		utr = self._next_utr()
 		result = self.service.process(_make_valid_payload(utr=utr, van="UNKNOWN-TPVAN"))
@@ -464,7 +511,12 @@ class TestTransactionPostCryptoRoundTrip(FrappeTestCase):
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
-		_set_settings(default_company=TEST_COMPANY, bank_account=TEST_BANK_ACCOUNT)
+		_ensure_payment_entry_user()
+		_set_settings(
+			default_company=TEST_COMPANY,
+			bank_account=TEST_BANK_ACCOUNT,
+			payment_entry_user=TEST_PAYMENT_ENTRY_USER,
+		)
 
 	def test_encrypt_decrypt_process_encrypt_decrypt(self):
 		# Proves the crypto round-trips through the service. No customer is
@@ -512,7 +564,12 @@ class TestTransactionPostEndpoint(FrappeTestCase):
 		from sbi_collection.install import make_custom_fields
 
 		make_custom_fields()
-		_set_settings(default_company=TEST_COMPANY, bank_account=TEST_BANK_ACCOUNT)
+		_ensure_payment_entry_user()
+		_set_settings(
+			default_company=TEST_COMPANY,
+			bank_account=TEST_BANK_ACCOUNT,
+			payment_entry_user=TEST_PAYMENT_ENTRY_USER,
+		)
 
 	def setUp(self):
 		self._customers = []

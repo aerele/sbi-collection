@@ -20,7 +20,6 @@ later phase - doing it here would risk auto-allocating against the wrong invoice
 """
 
 from contextlib import contextmanager
-from functools import wraps
 
 import frappe
 from erpnext.accounts.party import get_party_gle_account, get_party_gle_currency
@@ -31,31 +30,42 @@ from frappe.utils import cint, flt, getdate
 SBI_DATE_FORMAT = "%d-%m-%Y"
 
 
-@contextmanager
-def _account_permission_scope():
-	"""Temporarily allow ERPNext account lookups for the trusted SBI flow.
+def _validate_payment_entry_user(user):
+	"""Require an enabled, least-privilege System User for accounting work."""
+	if not user:
+		frappe.throw(frappe._("SBI Collection Settings: payment_entry_user is not configured"))
+	if user in {"Guest", "Administrator"}:
+		frappe.throw(frappe._("Payment Entry User must be a dedicated System User, not {0}").format(user))
 
-	The Transaction Post endpoint runs as Guest, while ERPNext's party-account
-	resolver checks account permissions before the Payment Entry exists. Preserve
-	the incoming flag value so nested callers and exception paths remain safe.
-	"""
-	previous_value = getattr(frappe.flags, "ignore_account_permission", False)
-	frappe.flags.ignore_account_permission = True
+	row = frappe.db.get_value("User", user, ["enabled", "user_type"], as_dict=True)
+	if not row:
+		frappe.throw(frappe._("Payment Entry User {0} does not exist").format(user))
+	if not cint(row.enabled):
+		frappe.throw(frappe._("Payment Entry User {0} is disabled").format(user))
+	if row.user_type != "System User":
+		frappe.throw(frappe._("Payment Entry User {0} must be a System User").format(user))
+
+	for permission_type in ("read", "create"):
+		if not frappe.has_permission("Payment Entry", permission_type, user=user):
+			frappe.throw(
+				frappe._("Payment Entry User {0} requires {1} permission on Payment Entry").format(
+					user, permission_type
+				)
+			)
+
+	return user
+
+
+@contextmanager
+def _payment_entry_user_scope(user):
+	"""Run ERPNext accounting validation as the configured integration user."""
+	user = _validate_payment_entry_user(user)
+	previous_user = frappe.session.user
+	frappe.set_user(user)
 	try:
 		yield
 	finally:
-		frappe.flags.ignore_account_permission = previous_value
-
-
-def _with_account_permission_scope(method):
-	"""Run a trusted Payment Entry operation inside the account-permission scope."""
-
-	@wraps(method)
-	def wrapped(*args, **kwargs):
-		with _account_permission_scope():
-			return method(*args, **kwargs)
-
-	return wrapped
+		frappe.set_user(previous_user)
 
 
 def _get_configured_receivable_account(customer, company):
@@ -183,7 +193,6 @@ def _parse_sbi_date(date_time):
 		return getdate()
 
 
-@_with_account_permission_scope
 def create_payment_entry(
 	*,
 	customer,
@@ -192,6 +201,7 @@ def create_payment_entry(
 	utr,
 	date_time,
 	bank_account,
+	payment_entry_user,
 	trans_typ=None,
 	ref_id=None,
 	request_id=None,
@@ -212,8 +222,36 @@ def create_payment_entry(
 			(also the duplicate-detection key).
 		date_time: SBI transaction date (DD-MM-YYYY).
 		bank_account: the collection Bank Account master (paid_to ledger source).
+		payment_entry_user: dedicated System User used for ERPNext accounting validation.
 		trans_typ, ref_id, request_id: optional SBI fields, captured in remarks.
 	"""
+	with _payment_entry_user_scope(payment_entry_user):
+		return _create_payment_entry(
+			customer=customer,
+			company=company,
+			amount=amount,
+			utr=utr,
+			date_time=date_time,
+			bank_account=bank_account,
+			trans_typ=trans_typ,
+			ref_id=ref_id,
+			request_id=request_id,
+		)
+
+
+def _create_payment_entry(
+	*,
+	customer,
+	company,
+	amount,
+	utr,
+	date_time,
+	bank_account,
+	trans_typ=None,
+	ref_id=None,
+	request_id=None,
+):
+	"""Build and insert the draft while already running as the integration user."""
 	paid_amount = flt(amount)
 	receivable = _resolve_receivable_account(customer, company)
 	bank_ledger = _resolve_bank_ledger_account(bank_account)
@@ -248,20 +286,16 @@ def create_payment_entry(
 	pe.bank_account = bank_account
 	pe.remarks = remarks
 
-	# Pre-populate account currency/type to avoid ERPNext's get_account_details(),
-	# which does an unconditional has_permission("Payment Entry", throw=True) that
-	# fails for the Guest caller and ignores all permission flags.
+	# Pre-populate stable account metadata. ERPNext versions that also require
+	# account balances may still call get_account_details(); that is safe because
+	# this function runs as the configured, least-privilege integration user.
 	pe.paid_from_account_currency, pe.paid_from_account_type = _account_currency_and_type(receivable)
 	pe.paid_to_account_currency, pe.paid_to_account_type = _account_currency_and_type(bank_ledger)
 
-	# Bypass doctype role permissions for the authenticated Guest caller. Account
-	# permission bypassing is scoped across this entire function by the decorator,
-	# including the earlier customer receivable-account lookup.
-	pe.flags.ignore_permissions = True
 	pe.setup_party_account_field()
 	pe.set_missing_values()
 	pe.validate()
-	pe.insert(ignore_permissions=True, ignore_mandatory=True)
+	pe.insert()
 	# Intentionally NOT submitted - left as a draft for manual reconciliation.
 
 	return pe.name

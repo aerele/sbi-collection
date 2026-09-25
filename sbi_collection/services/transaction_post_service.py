@@ -133,6 +133,7 @@ class TransactionPostService:
 		settings = frappe.get_cached_doc("SBI Collection Settings")
 		company = settings.default_company
 		bank_account = settings.bank_account
+		payment_entry_user = settings.payment_entry_user
 		if not company:
 			return self._result(
 				response=self.build_failure_response(
@@ -148,6 +149,17 @@ class TransactionPostService:
 			return self._result(
 				response=self.build_failure_response(
 					_("SBI Collection Settings: bank_account is not configured")
+				),
+				van=fields["van"],
+				customer=customer,
+				transaction_reference=fields["utr"],
+				payment_entry=None,
+				succeeded=False,
+			)
+		if not payment_entry_user:
+			return self._result(
+				response=self.build_failure_response(
+					_("SBI Collection Settings: payment_entry_user is not configured")
 				),
 				van=fields["van"],
 				customer=customer,
@@ -176,6 +188,7 @@ class TransactionPostService:
 			utr=fields["utr"],
 			date_time=fields["date_time"],
 			bank_account=bank_account,
+			payment_entry_user=payment_entry_user,
 			trans_typ=fields["trans_typ"],
 			ref_id=fields["ref_id"],
 			request_id=fields["request_id"],

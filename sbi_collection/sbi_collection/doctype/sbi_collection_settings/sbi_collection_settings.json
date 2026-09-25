@@ -26,6 +26,7 @@
   "column_break_behavior",
   "default_company",
   "bank_account",
+  "payment_entry_user",
   "ssl_verify"
  ],
  "fields": [
@@ -151,6 +152,13 @@
    "fieldtype": "Link",
    "label": "Collection Bank Account",
    "options": "Bank Account"
+  },
+  {
+   "description": "Enabled System User used only while ERPNext validates and creates draft Payment Entries. Grant the minimum required accounting permissions and restrict the user to the configured company.",
+   "fieldname": "payment_entry_user",
+   "fieldtype": "Link",
+   "label": "Payment Entry User",
+   "options": "User"
   },
   {
    "default": "1",
