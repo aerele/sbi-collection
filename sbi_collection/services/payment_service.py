@@ -31,11 +31,11 @@ SBI_DATE_FORMAT = "%d-%m-%Y"
 
 
 def _validate_payment_entry_user(user):
-	"""Require an enabled, least-privilege System User for accounting work."""
+	"""Require an enabled System User for accounting work."""
 	if not user:
 		frappe.throw(frappe._("SBI Collection Settings: payment_entry_user is not configured"))
-	if user in {"Guest", "Administrator"}:
-		frappe.throw(frappe._("Payment Entry User must be a dedicated System User, not {0}").format(user))
+	if user == "Guest":
+		frappe.throw(frappe._("Payment Entry User cannot be Guest"))
 
 	row = frappe.db.get_value("User", user, ["enabled", "user_type"], as_dict=True)
 	if not row:

@@ -154,7 +154,7 @@
    "options": "Bank Account"
   },
   {
-   "description": "Enabled System User used only while ERPNext validates and creates draft Payment Entries. Grant the minimum required accounting permissions and restrict the user to the configured company.",
+   "description": "Enabled System User used only while ERPNext validates and creates draft Payment Entries. A dedicated least-privilege user is recommended; Administrator is also supported.",
    "fieldname": "payment_entry_user",
    "fieldtype": "Link",
    "label": "Payment Entry User",

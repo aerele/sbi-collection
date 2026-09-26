@@ -207,12 +207,16 @@ class TestPaymentServicePermissions(FrappeTestCase):
 				raise RuntimeError("simulated accounting failure")
 		self.assertEqual(frappe.session.user, original_user)
 
-	def test_user_scope_rejects_guest_and_administrator(self):
-		for user in ("Guest", "Administrator"):
-			with self.subTest(user=user):
-				with self.assertRaisesRegex(frappe.ValidationError, "dedicated System User"):
-					with payment_service._payment_entry_user_scope(user):
-						pass
+	def test_user_scope_rejects_guest(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "cannot be Guest"):
+			with payment_service._payment_entry_user_scope("Guest"):
+				pass
+
+	def test_user_scope_allows_administrator_and_restores_caller(self):
+		original_user = frappe.session.user
+		with payment_service._payment_entry_user_scope("Administrator"):
+			self.assertEqual(frappe.session.user, "Administrator")
+		self.assertEqual(frappe.session.user, original_user)
 
 
 class TestReceivableAccountResolution(FrappeTestCase):
