@@ -16,6 +16,7 @@ DRAFT Payment Entry -> build SBI response. Pure business logic (no crypto/loggin
 
 import frappe
 from frappe import _
+from frappe.utils import getdate
 
 from sbi_collection.services import payment_service
 from sbi_collection.services.validation import validate_amount
@@ -44,6 +45,9 @@ class TransactionPostService:
 			if value is None or (isinstance(value, str) and not value.strip()):
 				raise frappe.ValidationError(_("Missing mandatory field: {0}").format(field))
 		validate_amount(payload["amount"], allow_zero=False)
+		# Reject future-dated transactions before Payment Entry creation.
+		if getdate(payload["date_time"], parse_day_first=True) > getdate():
+			raise frappe.ValidationError(_("Future Date Not Allowed"))
 
 	def extract_fields(self, payload):
 		"""Return a dict of the SBI-relevant fields from the decrypted payload."""

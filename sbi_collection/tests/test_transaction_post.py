@@ -343,6 +343,13 @@ class TestTransactionPostService(FrappeTestCase):
 				with self.assertRaises(frappe.ValidationError):
 					self.service.validate_request(payload)
 
+	def test_validate_request_rejects_future_date(self):
+		payload = _make_valid_payload(self._next_utr())
+		payload["date_time"] = frappe.utils.add_days(frappe.utils.getdate(), 1).strftime("%d-%m-%Y")
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Future Date Not Allowed"):
+			self.service.validate_request(payload)
+
 	# --- get_customer_by_van ---
 	def test_get_customer_by_van_finds_seeded_customer(self):
 		cust, van = self._seed_customer()
@@ -432,6 +439,20 @@ class TestTransactionPostService(FrappeTestCase):
 		self.assertFalse(result["succeeded"])
 		self.assertEqual(result["response"]["status_code"], "01")
 		self.assertIsNone(result["payment_entry"])
+
+	def test_process_future_date_returns_failure_without_creating_payment_entry(self):
+		_, van = self._seed_customer()
+		utr = self._next_utr()
+		payload = _make_valid_payload(utr=utr, van=van)
+		payload["date_time"] = frappe.utils.add_days(frappe.utils.getdate(), 1).strftime("%d-%m-%Y")
+
+		result = self.service.process(payload)
+
+		self.assertFalse(result["succeeded"])
+		self.assertEqual(result["response"]["status_code"], "01")
+		self.assertIn("Future Date Not Allowed", result["response"]["message"])
+		self.assertIsNone(result["payment_entry"])
+		self.assertFalse(frappe.db.exists("Payment Entry", {"reference_no": utr, "company": TEST_COMPANY}))
 
 	def test_process_duplicate_does_not_create_second_pe(self):
 		_, van = self._seed_customer()
