@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import unittest
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
@@ -45,6 +46,7 @@ class TestUATContract(unittest.TestCase):
 			token_expiry_minutes=60,
 			default_company="Test Company",
 			bank_account="Test Bank",
+			payment_entry_user="sbi-payment@example.com",
 			get_password=lambda field, **kwargs: self.passwords.get(field),
 			load_keys=Mock(return_value=(self.client_key, self.bank_key.public_key())),
 		)
@@ -88,6 +90,9 @@ class TestUATContract(unittest.TestCase):
 		)
 		self.enterContext(
 			patch.object(payment_service, "_account_currency_and_type", return_value=("INR", "Bank"))
+		)
+		self.enterContext(
+			patch.object(payment_service, "_payment_entry_user_scope", return_value=nullcontext())
 		)
 		for name, value in {
 			"db": self.db,
@@ -340,7 +345,9 @@ class TestUATContract(unittest.TestCase):
 		self.assertEqual(doc.paid_amount, 300)
 		self.assertEqual(doc.reference_no, "UAT-UTR")
 		doc.submit.assert_not_called()
-		doc.insert.assert_called_once_with(ignore_permissions=True, ignore_mandatory=True)
+		# The dedicated integration user must pass ERPNext's normal insert permissions
+		# and mandatory-field validation; the SBI flow no longer bypasses either.
+		doc.insert.assert_called_once_with()
 		second = self._decrypt(self._call("transaction_post", payload))
 		self.assertEqual(second["status_code"], "01")
 		self.assertIn("Duplicate transaction", second["message"])
